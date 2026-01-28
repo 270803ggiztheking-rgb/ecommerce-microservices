@@ -1,0 +1,255 @@
+version: 2.1
+
+orbs:
+  node: circleci/node@5.1.0
+  docker: circleci/docker@2.2.0
+  aws-eks: circleci/aws-eks@2.2.0
+  kubernetes: circleci/kubernetes@1.3.1
+
+executors:
+  node-executor:
+    docker:
+      - image: cimg/node:20.10
+    working_directory: ~/project
+
+jobs:
+  # Install dependencies
+  install-dependencies:
+    executor: node-executor
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "package.json" }}
+            - v1-dependencies-
+      - run:
+          name: Install Dependencies
+          command: npm install
+      - save_cache:
+          paths:
+            - node_modules
+          key: v1-dependencies-{{ checksum "package.json" }}
+      - persist_to_workspace:
+          root: ~/project
+          paths:
+            - .
+
+  # Lint code
+  lint:
+    executor: node-executor
+    steps:
+      - attach_workspace:
+          at: ~/project
+      - run:
+          name: Run ESLint
+          command: npm run lint
+
+  # Run tests
+  test:
+    executor: node-executor
+    steps:
+      - attach_workspace:
+          at: ~/project
+      - run:
+          name: Run Tests
+          command: npm run test:coverage
+      - store_test_results:
+          path: ./coverage
+      - store_artifacts:
+          path: ./coverage
+
+  # Build services
+  build-services:
+    executor: node-executor
+    steps:
+      - attach_workspace:
+          at: ~/project
+      - run:
+          name: Build All Services
+          command: npm run build:services
+      - persist_to_workspace:
+          root: ~/project
+          paths:
+            - services/*/dist
+
+  # Build and push Docker images
+  build-docker-products:
+    executor: docker/docker
+    steps:
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - checkout
+      - docker/check
+      - docker/build:
+          image: $DOCKER_REGISTRY/ecommerce-products
+          tag: $CIRCLE_SHA1,latest
+          path: ./services/products
+      - docker/push:
+          image: $DOCKER_REGISTRY/ecommerce-products
+          tag: $CIRCLE_SHA1,latest
+
+  build-docker-gateway:
+    executor: docker/docker
+    steps:
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - checkout
+      - docker/check
+      - docker/build:
+          image: $DOCKER_REGISTRY/ecommerce-gateway
+          tag: $CIRCLE_SHA1,latest
+          path: ./services/gateway
+      - docker/push:
+          image: $DOCKER_REGISTRY/ecommerce-gateway
+          tag: $CIRCLE_SHA1,latest
+
+  build-docker-frontend:
+    executor: docker/docker
+    steps:
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - checkout
+      - docker/check
+      - docker/build:
+          image: $DOCKER_REGISTRY/ecommerce-frontend
+          tag: $CIRCLE_SHA1,latest
+          path: ./frontend
+      - docker/push:
+          image: $DOCKER_REGISTRY/ecommerce-frontend
+          tag: $CIRCLE_SHA1,latest
+
+  # Deploy to staging
+  deploy-staging:
+    executor: aws-eks/python3
+    parameters:
+      cluster-name:
+        type: string
+        default: ecommerce-staging
+    steps:
+      - checkout
+      - aws-eks/update-kubeconfig-with-authenticator:
+          cluster-name: << parameters.cluster-name >>
+          install-kubectl: true
+      - kubernetes/install-kubectl
+      - run:
+          name: Deploy to Staging
+          command: |
+            kubectl set image deployment/products-service \
+              products=$DOCKER_REGISTRY/ecommerce-products:$CIRCLE_SHA1 \
+              --namespace=staging
+            kubectl set image deployment/gateway \
+              gateway=$DOCKER_REGISTRY/ecommerce-gateway:$CIRCLE_SHA1 \
+              --namespace=staging
+            kubectl set image deployment/frontend \
+              frontend=$DOCKER_REGISTRY/ecommerce-frontend:$CIRCLE_SHA1 \
+              --namespace=staging
+      - run:
+          name: Verify Deployment
+          command: |
+            kubectl rollout status deployment/products-service --namespace=staging
+            kubectl rollout status deployment/gateway --namespace=staging
+            kubectl rollout status deployment/frontend --namespace=staging
+
+  # Deploy to production
+  deploy-production:
+    executor: aws-eks/python3
+    parameters:
+      cluster-name:
+        type: string
+        default: ecommerce-production
+    steps:
+      - checkout
+      - aws-eks/update-kubeconfig-with-authenticator:
+          cluster-name: << parameters.cluster-name >>
+          install-kubectl: true
+      - kubernetes/install-kubectl
+      - run:
+          name: Deploy to Production
+          command: |
+            kubectl set image deployment/products-service \
+              products=$DOCKER_REGISTRY/ecommerce-products:$CIRCLE_SHA1 \
+              --namespace=production
+            kubectl set image deployment/gateway \
+              gateway=$DOCKER_REGISTRY/ecommerce-gateway:$CIRCLE_SHA1 \
+              --namespace=production
+            kubectl set image deployment/frontend \
+              frontend=$DOCKER_REGISTRY/ecommerce-frontend:$CIRCLE_SHA1 \
+              --namespace=production
+      - run:
+          name: Verify Deployment
+          command: |
+            kubectl rollout status deployment/products-service --namespace=production
+            kubectl rollout status deployment/gateway --namespace=production
+            kubectl rollout status deployment/frontend --namespace=production
+
+workflows:
+  version: 2
+  build-test-deploy:
+    jobs:
+      - install-dependencies
+
+      - lint:
+          requires:
+            - install-dependencies
+
+      - test:
+          requires:
+            - install-dependencies
+
+      - build-services:
+          requires:
+            - lint
+            - test
+
+      - build-docker-products:
+          requires:
+            - build-services
+          filters:
+            branches:
+              only:
+                - develop
+                - main
+
+      - build-docker-gateway:
+          requires:
+            - build-services
+          filters:
+            branches:
+              only:
+                - develop
+                - main
+
+      - build-docker-frontend:
+          requires:
+            - build-services
+          filters:
+            branches:
+              only:
+                - develop
+                - main
+
+      - deploy-staging:
+          requires:
+            - build-docker-products
+            - build-docker-gateway
+            - build-docker-frontend
+          filters:
+            branches:
+              only: develop
+
+      - hold-production:
+          type: approval
+          requires:
+            - build-docker-products
+            - build-docker-gateway
+            - build-docker-frontend
+          filters:
+            branches:
+              only: main
+
+      - deploy-production:
+          requires:
+            - hold-production
+          filters:
+            branches:
+              only: main

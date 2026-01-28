@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: products-service
+  namespace: production
+  labels:
+    app: products-service
+    tier: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: products-service
+  template:
+    metadata:
+      labels:
+        app: products-service
+        tier: backend
+    spec:
+      containers:
+        - name: products
+          image: your-registry/ecommerce-products:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 4001
+              name: graphql
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "4001"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: db-secrets
+                  key: products-db-url
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: cache-secrets
+                  key: redis-url
+            - name: LOG_LEVEL
+              value: "info"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4001
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4001
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: products-service
+  namespace: production
+  labels:
+    app: products-service
+spec:
+  type: ClusterIP
+  ports:
+    - port: 4001
+      targetPort: 4001
+      protocol: TCP
+      name: graphql
+  selector:
+    app: products-service
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: products-service-hpa
+  namespace: production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: products-service
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

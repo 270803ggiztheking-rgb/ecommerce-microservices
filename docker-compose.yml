@@ -1,0 +1,201 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Databases
+  postgres-products:
+    image: postgres:16-alpine
+    container_name: ecommerce-db-products
+    environment:
+      POSTGRES_DB: products_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-products-data:/var/lib/postgresql/data
+    networks:
+      - ecommerce-network
+
+  postgres-users:
+    image: postgres:16-alpine
+    container_name: ecommerce-db-users
+    environment:
+      POSTGRES_DB: users_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-users-data:/var/lib/postgresql/data
+    networks:
+      - ecommerce-network
+
+  postgres-orders:
+    image: postgres:16-alpine
+    container_name: ecommerce-db-orders
+    environment:
+      POSTGRES_DB: orders_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres-orders-data:/var/lib/postgresql/data
+    networks:
+      - ecommerce-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: ecommerce-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - ecommerce-network
+    command: redis-server --appendonly yes
+
+  # Products Microservice
+  products-service:
+    build:
+      context: ./services/products
+      dockerfile: Dockerfile
+    container_name: ecommerce-products-service
+    ports:
+      - "4001:4001"
+    environment:
+      NODE_ENV: development
+      PORT: 4001
+      DATABASE_URL: postgresql://postgres:postgres123@postgres-products:5432/products_db
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - postgres-products
+      - redis
+    networks:
+      - ecommerce-network
+    volumes:
+      - ./services/products:/app
+      - /app/node_modules
+
+  # Users Microservice
+  users-service:
+    build:
+      context: ./services/users
+      dockerfile: Dockerfile
+    container_name: ecommerce-users-service
+    ports:
+      - "4002:4002"
+    environment:
+      NODE_ENV: development
+      PORT: 4002
+      DATABASE_URL: postgresql://postgres:postgres123@postgres-users:5432/users_db
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+    depends_on:
+      - postgres-users
+      - redis
+    networks:
+      - ecommerce-network
+    volumes:
+      - ./services/users:/app
+      - /app/node_modules
+
+  # Orders Microservice
+  orders-service:
+    build:
+      context: ./services/orders
+      dockerfile: Dockerfile
+    container_name: ecommerce-orders-service
+    ports:
+      - "4003:4003"
+    environment:
+      NODE_ENV: development
+      PORT: 4003
+      DATABASE_URL: postgresql://postgres:postgres123@postgres-orders:5432/orders_db
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      - postgres-orders
+      - redis
+    networks:
+      - ecommerce-network
+    volumes:
+      - ./services/orders:/app
+      - /app/node_modules
+
+  # Payments Microservice
+  payments-service:
+    build:
+      context: ./services/payments
+      dockerfile: Dockerfile
+    container_name: ecommerce-payments-service
+    ports:
+      - "4004:4004"
+    environment:
+      NODE_ENV: development
+      PORT: 4004
+      REDIS_URL: redis://redis:6379
+      STRIPE_SECRET_KEY: sk_test_your_stripe_key
+    depends_on:
+      - redis
+    networks:
+      - ecommerce-network
+    volumes:
+      - ./services/payments:/app
+      - /app/node_modules
+
+  # Apollo Gateway
+  gateway:
+    build:
+      context: ./services/gateway
+      dockerfile: Dockerfile
+    container_name: ecommerce-gateway
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      PRODUCTS_SERVICE_URL: http://products-service:4001/graphql
+      USERS_SERVICE_URL: http://users-service:4002/graphql
+      ORDERS_SERVICE_URL: http://orders-service:4003/graphql
+      PAYMENTS_SERVICE_URL: http://payments-service:4004/graphql
+    depends_on:
+      - products-service
+      - users-service
+      - orders-service
+      - payments-service
+    networks:
+      - ecommerce-network
+    volumes:
+      - ./services/gateway:/app
+      - /app/node_modules
+
+  # Next.js Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ecommerce-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_GRAPHQL_URL: http://localhost:4000/graphql
+    depends_on:
+      - gateway
+    networks:
+      - ecommerce-network
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+
+networks:
+  ecommerce-network:
+    driver: bridge
+
+volumes:
+  postgres-products-data:
+  postgres-users-data:
+  postgres-orders-data:
+  redis-data:

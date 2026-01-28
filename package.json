@@ -1,0 +1,68 @@
+{
+    "name": "ecommerce-microservices-platform",
+    "version": "1.0.0",
+    "description": "Full-stack e-commerce platform with microservices architecture",
+    "private": true,
+    "workspaces": [
+        "frontend",
+        "services/*"
+    ],
+    "scripts": {
+        "install:all": "npm install && npm run install:frontend && npm run install:services",
+        "install:frontend": "cd frontend && npm install",
+        "install:services": "cd services/gateway && npm install && cd ../products && npm install && cd ../users && npm install && cd ../orders && npm install && cd ../payments && npm install",
+        "dev": "concurrently \"npm run dev:gateway\" \"npm run dev:products\" \"npm run dev:users\" \"npm run dev:orders\" \"npm run dev:payments\" \"npm run dev:frontend\"",
+        "dev:frontend": "cd frontend && npm run dev",
+        "dev:gateway": "cd services/gateway && npm run dev",
+        "dev:products": "cd services/products && npm run dev",
+        "dev:users": "cd services/users && npm run dev",
+        "dev:orders": "cd services/orders && npm run dev",
+        "dev:payments": "cd services/payments && npm run dev",
+        "build": "npm run build:services && npm run build:frontend",
+        "build:frontend": "cd frontend && npm run build",
+        "build:services": "cd services/gateway && npm run build && cd ../products && npm run build && cd ../users && npm run build && cd ../orders && npm run build && cd ../payments && npm run build",
+        "test": "npm run test:services && npm run test:frontend",
+        "test:services": "cd services/gateway && npm test && cd ../products && npm test && cd ../users && npm test && cd ../orders && npm test && cd ../payments && npm test",
+        "test:frontend": "cd frontend && npm test",
+        "test:coverage": "npm run test -- --coverage",
+        "docker:build": "docker-compose build",
+        "docker:up": "docker-compose up -d",
+        "docker:down": "docker-compose down",
+        "k8s:deploy": "kubectl apply -f infrastructure/kubernetes/",
+        "helm:install": "helm install ecommerce infrastructure/helm/ecommerce",
+        "migrate:all": "npm run migrate:products && npm run migrate:users && npm run migrate:orders",
+        "migrate:products": "cd services/products && npm run migrate",
+        "migrate:users": "cd services/users && npm run migrate",
+        "migrate:orders": "cd services/orders && npm run migrate",
+        "lint": "eslint . --ext .ts,.tsx",
+        "format": "prettier --write \"**/*.{ts,tsx,json,md}\""
+    },
+    "devDependencies": {
+        "@types/node": "^20.10.0",
+        "@typescript-eslint/eslint-plugin": "^6.13.0",
+        "@typescript-eslint/parser": "^6.13.0",
+        "concurrently": "^8.2.2",
+        "eslint": "^8.54.0",
+        "prettier": "^3.1.0",
+        "typescript": "^5.3.2"
+    },
+    "engines": {
+        "node": ">=20.0.0",
+        "npm": ">=10.0.0"
+    },
+    "keywords": [
+        "microservices",
+        "graphql",
+        "typescript",
+        "nodejs",
+        "react",
+        "nextjs",
+        "apollo",
+        "kubernetes",
+        "docker",
+        "aws",
+        "ecommerce"
+    ],
+    "author": "Your Name",
+    "license": "MIT"
+}
